@@ -36,6 +36,15 @@ conduit/
 
 ## 启动
 
+最快的方式是在上一级目录执行一键脚本：
+
+```bash
+cd ..          # 回到 全栈-项目-demo
+./run.sh start # 同时起前后端
+```
+
+下面是从零手动启动的步骤。
+
 前置：`devstack up`（Postgres 已在跑），或在 `backend/.env` 里换成你自己的库。
 
 ### 后端（8000）
