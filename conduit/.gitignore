@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+.next/
+.venv/
+__pycache__/
+*.pyc
+
+# 环境变量（.env 是本地配置，.env.example 保留）
+.env
+.env.local
+.env.*.local
+
+# 系统与编辑器
+.DS_Store
+.idea/
+.vscode/
