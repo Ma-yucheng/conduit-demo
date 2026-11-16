@@ -1,112 +1,84 @@
-# Conduit — RealWorld 全栈示例
+# 项目本体
 
-FastAPI + PostgreSQL + Next.js 实现的 [RealWorld](https://realworld-docs.netlify.app/)（Conduit）示例应用。
-按官方 API 规范实现，前后端分离，可作为全栈练手项目。
+上一层的 [README](../README.md) 讲怎么跑。这份讲代码怎么读、怎么改。
 
-## 技术栈
-
-| 层 | 选型 |
-|---|---|
-| 后端 | Python 3.13 · FastAPI · SQLAlchemy 2.0（async）· asyncpg |
-| 数据库 | PostgreSQL 16（Docker） |
-| 鉴权 | JWT（PyJWT）+ PBKDF2-SHA256 密码散列（标准库实现，无 passlib 兼容坑） |
-| 前端 | Next.js 16（App Router）· React 19 · TypeScript · 手写 CSS |
-
-## 目录
+## 后端
 
 ```
-conduit/
-├── backend/
-│   ├── app/
-│   │   ├── main.py          FastAPI 入口、CORS、生命周期建表
-│   │   ├── config.py        .env 配置（pydantic-settings）
-│   │   ├── db.py            异步引擎与 Session
-│   │   ├── models.py        User / Article / Tag / Comment / 关联表
-│   │   ├── schemas.py       请求体校验
-│   │   ├── security.py      密码散列、JWT、当前用户依赖
-│   │   ├── payloads.py      输出结构 + follow/favorite 状态聚合
-│   │   └── routers/         users · profiles · articles · comments · tags
-│   ├── seed.py              演示数据
-│   └── .env.example
-└── frontend/
-    ├── app/                 首页 / 文章 / 编辑器 / 登录注册 / 设置 / 个人页
-    ├── components/          Nav · ArticlePreview
-    └── lib/                 api 封装 · auth hook · 类型 · 格式化
+backend/app/
+├── main.py        入口。挂 CORS、启动时建表、把路由挂到 /api
+├── config.py      .env 读成 settings，一个地方管所有配置
+├── db.py          异步引擎、Session、get_db 依赖
+├── models.py      5 张表：users / articles / tags / comments / 关联表
+├── security.py    密码散列、JWT 签发校验、取当前用户
+├── payloads.py    把 ORM 对象拼成 JSON，顺带算点赞数、关注状态
+└── routers/       users · profiles · articles · comments · tags
 ```
 
-## 启动
+**为什么单独有个 `payloads.py`。** 同一个文章，列表页要「点赞数」，详情页要「我有没有点赞」，返回结构还不完全一样。拼装逻辑抽出来，路由里就只剩查数据。
 
-最快的方式是在上一级目录执行一键脚本：
+### 五张表
+
+| 表 | 干什么 | 备注 |
+|---|---|---|
+| `users` | 账号 | 密码存 `pbkdf2_sha256$轮数$盐$哈希` |
+| `articles` | 文章 | `slug` 唯一，是 URL 里那段 |
+| `tags` | 标签 | 和文章多对多 |
+| `comments` | 评论 | 挂在文章下 |
+| `followers` / `favorites` | 纯关联表 | 没有主键 id，两列复合主键 |
+
+### 加一个接口要动哪
+
+比如加「按阅读量排序」：
+
+1. `models.py` 给 `Article` 加 `views` 字段（或建新表）
+2. `schemas.py` 加请求体（如果前端要传东西）
+3. `routers/articles.py` 加路由，记得写 `response_model` 之外的返回结构时对照 `payloads.py`
+4. 前端 `lib/api.ts` 不用动，`app/` 里调一下就成
+
+改完 `models.py` 要重建库，因为建表是 `create_all`：
 
 ```bash
-cd ..          # 回到 全栈-项目-demo
-./run.sh start # 同时起前后端
+devstack reset        # 清空数据卷
+python seed.py        # 重新灌演示数据
 ```
 
-下面是从零手动启动的步骤。
+## 前端
 
-前置：`devstack up`（Postgres 已在跑），或在 `backend/.env` 里换成你自己的库。
-
-### 后端（8000）
-
-```bash
-cd backend
-cp .env.example .env          # 首次
-.venv/bin/python seed.py      # 灌演示数据（可重复执行）
-.venv/bin/uvicorn app.main:app --reload --port 8000
+```
+frontend/
+├── app/
+│   ├── page.tsx              首页：列表 + 标签筛选 + 分页
+│   ├── article/[slug]/       文章详情、点赞、评论
+│   ├── editor/               发文章 / 改文章（?slug= 区分）
+│   ├── login/ register/      表单页
+│   ├── settings/             改资料
+│   └── profile/[username]/   个人主页
+├── components/               Nav、文章卡片
+└── lib/
+    ├── api.ts                fetch 封装，自动带 token，统一报错
+    ├── auth.ts               useAuth：读 token、拉当前用户
+    └── types.ts              Article / User / Comment 的类型
 ```
 
-接口文档：http://127.0.0.1:8000/docs
+登录态存在 localStorage，`api.ts` 每次请求自动加 `Authorization`。没做成 cookie 是因为前后端分域，先简单点。
 
-### 前端（3000）
+## 自动化检查
+
+`frontend/scripts/ui-check.mjs` 用 Playwright 真开浏览器，走一遍登录 → 点赞 → 评论 → 发文章 → 个人主页，顺便截图。
 
 ```bash
 cd frontend
-pnpm install                  # 首次
-pnpm dev                      # 或 pnpm build && pnpm start
+pnpm ui:check        # 需要前后端都在跑
 ```
 
-打开 http://localhost:3000
+截图会落到 `docs/shots/`。截图和检查一起跑，是保证「改完没把界面改崩」最省事的办法。
 
-### 演示账号
+## 配置
 
-| 邮箱 | 密码 |
+| 文件 | 内容 |
 |---|---|
-| alice@example.com | password123 |
-| bob@example.com | password123 |
+| `backend/.env` | 数据库地址、JWT 密钥、CORS 白名单 |
+| `frontend/.env.local` | 后端地址 `NEXT_PUBLIC_API_URL` |
 
-种子数据带 3 篇文章；注册新账号可以体验完整流程。
-
-## 已实现的接口
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/users` | 注册，返回 JWT |
-| POST | `/api/users/login` | 登录 |
-| GET/PUT | `/api/user` | 当前用户 / 修改资料密码 |
-| GET | `/api/profiles/:username` | 用户资料 |
-| POST/DELETE | `/api/profiles/:username/follow` | 关注 / 取关 |
-| GET | `/api/articles` | 列表，支持 `tag` `author` `favorited` `limit` `offset` |
-| GET | `/api/articles/feed` | 关注的人的动态（需登录） |
-| POST | `/api/articles` | 发文章 |
-| GET/PUT/DELETE | `/api/articles/:slug` | 详情 / 编辑 / 删除 |
-| POST/DELETE | `/api/articles/:slug/favorite` | 点赞 / 取消 |
-| GET/POST | `/api/articles/:slug/comments` | 评论列表 / 发表 |
-| DELETE | `/api/articles/:slug/comments/:id` | 删除评论 |
-| GET | `/api/tags` | 全部标签 |
-| GET | `/api/health` | 健康检查 |
-
-## 可以拿来练什么
-
-1. **加分页**：目前列表支持 `limit/offset`，前端有页码按钮，但没做服务端游标分页。
-2. **换 ORM 写法**：`payloads.py` 里用聚合查询补 `favoritesCount`，可以改成数据库层面的一次性 JOIN。
-3. **加 Redis**：文章阅读数、热门标签、限流都可以落到 Redis（环境里已经跑着）。
-4. **加迁移**：现在启动时 `create_all` 建表，生产应换成 Alembic。
-5. **测试**：用 `pytest + httpx.AsyncClient` 覆盖注册→发文章→评论主链路。
-6. **部署**：Dockerfile + docker compose 一把梭，或 Vercel（前端）+ Railway（后端）。
-
-## 已知取舍
-
-- 密码用标准库 PBKDF2，演示够用；生产建议 argon2/bcrypt。
-- 中文标题的 slug 会退化成随机串（非 ASCII 无法转写），不影响功能。
-- 开发期 `create_all` 建表，改模型需 `devstack reset` 重建库。
+两个都有对应的 `.example`，照抄改名就能用。生产环境记得换 `JWT_SECRET`。
